@@ -8,6 +8,7 @@ from langchain_core.tools import tool
 from gsearch import google_search
 from langchain_core.messages import AIMessage
 from dotenv import load_dotenv
+import streamlit as st
 
 load_dotenv()
 
@@ -63,6 +64,7 @@ def websearch(state: State):
     results = ""
     for tool_call in response_message.tool_calls:
         print(f"searching for: {tool_call['args']['search_term']}")
+        st.write(f"searching for: {tool_call['args']['search_term']}")
         result = gsearch.invoke(tool_call)
         results += f"Search term: {tool_call['args']['search_term']}\nResult: {result.content}\n\n"
     return {"messages": [AIMessage(content=results)]}
@@ -89,20 +91,19 @@ graph = graph_builder.compile()
 
 def stream_graph_updates(user_input: str):
     msgs = [ {"role": "user", "content": user_input} ]
-    for event in graph.stream({"messages": msgs}):
-        for name, value in event.items():
-            if name.title() == "Endsummary":
-                print(f"{name.title()}: ", value["messages"][-1].content)
-                print("-" * 100) 
-                print("-" * 100)
+    while True:
+        for event in graph.stream({"messages": msgs}):
+            for name, value in event.items():
+                if name.title() == "Endsummary":
+                    print(f"{name.title()}: ", value["messages"][-1].content)
+                    print("-" * 100)
+                    return value["messages"][-1].content
 
-while True:
-    try:
-        user_input = input("User: ")
-        if user_input.lower() in ["quit", "exit", "q"]:
-            print("Goodbye!")
-            break
-        stream_graph_updates(user_input)
-    except Exception as e:
-        print(f"An error occurred: {e}")
-        break
+st.title("AMA reasoner with web search")
+user_input=st.text_area("Ask me anything!")
+
+if st.button("Submit"):
+    with st.spinner("Please wait..."):
+        output = stream_graph_updates(user_input)
+        st.write(output)
+        st.success("Done!")
