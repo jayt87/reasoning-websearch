@@ -99,14 +99,5 @@ You can customize the following aspects:
 
 - app.py - Main application with LangGraph workflow and Streamlit UI
 - gsearch.py - Google Search utility
-- deploy.sh - Azure deployment script
-- startup.sh - Application startup script for Azure
 - requirements.txt - Python dependencies
 
-## License
-
-[Specify your license information here]
-
-## Contributing
-
-[Add contribution guidelines if applicable]
