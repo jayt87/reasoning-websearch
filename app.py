@@ -9,8 +9,45 @@ from gsearch import google_search
 from langchain_core.messages import AIMessage
 from dotenv import load_dotenv
 import streamlit as st
+import hmac
+from langgraph.checkpoint.memory import MemorySaver
+
+if 'memory' not in st.session_state:
+    st.session_state['memory'] = MemorySaver()
+
+memory = st.session_state.memory
+
+config = {"configurable": {"thread_id": "1"}}
 
 load_dotenv()
+
+# Authentication function
+def check_password():
+    """Returns `True` if the user had the correct password."""
+    
+    def password_entered():
+        """Checks whether a password entered by the user is correct."""
+        if hmac.compare_digest(st.session_state["username"], st.secrets["credentials"]["username"]) and \
+           hmac.compare_digest(st.session_state["password"], st.secrets["credentials"]["password"]):
+            st.session_state["password_correct"] = True
+            del st.session_state["password"]  # Don't store the password
+            del st.session_state["username"]  # Don't store the username
+        else:
+            st.session_state["password_correct"] = False
+
+    # Initialize session state
+    if "password_correct" not in st.session_state:
+        st.session_state["password_correct"] = False
+
+    # Show login form if not authenticated
+    if not st.session_state["password_correct"]:
+        st.title("Login")
+        st.text_input("Username", key="username")
+        st.text_input("Password", type="password", key="password")
+        st.button("Login", on_click=password_entered)
+        return False
+    
+    return True
 
 class State(TypedDict):
     messages: Annotated[list, add_messages]
@@ -24,6 +61,10 @@ llm_reasoning = init_chat_model(
 llm_reasoning2 = init_chat_model(
     "azure_openai:o1",
     azure_deployment="o1",
+)
+grokllm = init_chat_model(
+    "azure_openai:grok-3",
+    azure_deployment="grok-3",
 )
 llm = init_chat_model(
     "azure_openai:gpt-4.1",
@@ -40,7 +81,7 @@ llm_withTools = llm.bind_tools([gsearch])
 
 def rewrite(state: State):
     prompt = [
-        {"role": "system", "content": "You are an AI assistant that must take the user question and generate a list of search terms that will be used to search the web. The search terms should be concise and focused on the technical aspects of the question. If the user asks one simple thing, you can just return the question as is. If the user asks a complex question, you should break it down into smaller parts and generate multiple search terms for each part. Keep the overlap between search terms as small as possible. Generate only the minimun necessary search terms. Return the search terms as a list of strings ['search_term1','search_term2','search_term3'] and nothing else."},
+        {"role": "system", "content": "You are an AI assistant that must take the user question and generate a list of search terms that will be used to search the web. The search terms should be concise and focused on the technical aspects of the question. If the user asks one simple thing, you can just return the question as is. If the user asks a complex question, you should break it down into smaller parts and generate multiple search terms for each part. Keep the overlap between search terms as small as possible. Generate only the minimun necessary search terms, yet collectively cover the user’s question entirely. Return the search terms as a list of strings ['search_term1','search_term2','search_term3'] and nothing else."},
     ] + state["messages"]
     return {"messages": [ llm.invoke(prompt) ]}
 
@@ -55,6 +96,12 @@ def reason2(state: State):
         {"role": "system", "content": "You are an AI assistant that answers the user question in a very clear, accurate and concise manner. Pay attention to the technical details and provide accurate information. Mention if you don't know something."},
     ] + state["messages"]
     return {"messages": [ llm_reasoning2.invoke(prompt) ]}
+
+def grok(state: State):
+    prompt = [
+        {"role": "system", "content": "You are an AI assistant that answers the user question in a very clear, accurate and concise manner. Pay attention to the technical details and provide accurate information. Mention if you don't know something."},
+    ] + state["messages"]
+    return {"messages": [ grokllm.invoke(prompt) ]}
 
 def websearch(state: State):
     prompt = [
@@ -71,39 +118,45 @@ def websearch(state: State):
 
 def endsummary(state: State):
     prompt = [
-        {"role": "system", "content": "You are an AI assistant that must combine all information received from different inputs to generate a response that best covers the question. You are getting results from a few LLMs and from web search. Information may be overlaping or contradicting, use your reasoning to formulate the accurate response. Focus on technical aspects and details. Keep the response less verbose."},
+        {"role": "system", "content": "You are an AI assistant that must combine all information received from different inputs to generate a response that best covers the question. You are getting results from a few LLMs and from web search. Information may be overlaping or contradicting, use your reasoning to formulate the accurate response. If you get contradicting information mention it along with sources. Focus on technical aspects and details. Keep the response less verbose."},
     ] + state["messages"]
     return {"messages": [ llm.invoke(prompt) ]}
 
 graph_builder.add_node("rewrite", rewrite)
 graph_builder.add_node("reason", reason)
 graph_builder.add_node("reason2", reason2)
+graph_builder.add_node("grok", grok)
 graph_builder.add_node("websearch", websearch)
 graph_builder.add_node("endsummary", endsummary)
 
 graph_builder.add_edge(START, "reason")
 graph_builder.add_edge(START, "reason2")
 graph_builder.add_edge(START, "rewrite")
+graph_builder.add_edge(START, "grok")
 graph_builder.add_edge("rewrite", "websearch")
-graph_builder.add_edge(["websearch","reason","reason2"], "endsummary")
+graph_builder.add_edge(["websearch","reason","reason2","grok"], "endsummary")
 graph_builder.add_edge("endsummary", END)
-graph = graph_builder.compile()
+graph = graph_builder.compile(checkpointer=memory)
 
 def stream_graph_updates(user_input: str):
     msgs = [ {"role": "user", "content": user_input} ]
     while True:
-        for event in graph.stream({"messages": msgs}):
+        for event in graph.stream({"messages": msgs},
+                                config):
             for name, value in event.items():
                 if name.title() == "Endsummary":
                     print(f"{name.title()}: ", value["messages"][-1].content)
                     print("-" * 100)
                     return value["messages"][-1].content
 
-st.title("AMA reasoner with web search")
-user_input=st.text_area("Ask me anything!")
-
-if st.button("Submit"):
-    with st.spinner("Please wait..."):
-        output = stream_graph_updates(user_input)
-        st.write(output)
-        st.success("Done!")
+st.set_page_config(layout="wide")
+#stream_graph_updates("who is pythagoras?")
+if check_password():
+    st.title("AMA reasoner with web search")
+    user_input=st.text_area("Ask me anything!")
+    
+    if st.button("Submit"):
+        with st.spinner("Please wait..."):
+            output = stream_graph_updates(user_input)
+            st.write(output)
+            st.success("Done!")

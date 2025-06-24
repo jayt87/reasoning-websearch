@@ -2,3 +2,4 @@ langgraph
 streamlit
 langchain[openai]
 python-dotenv
+beautifulsoup4
