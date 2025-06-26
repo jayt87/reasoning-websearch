@@ -3,7 +3,7 @@ from typing import Annotated
 from typing_extensions import TypedDict
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
-from langchain.chat_models import init_chat_model
+from llm_models import llm_reasoning, llm_reasoning2, grokllm, llm
 from langchain_core.tools import tool
 from gsearch import google_search
 from langchain_core.messages import AIMessage
@@ -11,6 +11,8 @@ from dotenv import load_dotenv
 import streamlit as st
 import hmac
 from langgraph.checkpoint.memory import MemorySaver
+from prompts import REWRITE_SYSTEM_PROMPT, REASON_SYSTEM_PROMPT, REASON2_SYSTEM_PROMPT, GROK_SYSTEM_PROMPT, WEBSEARCH_SYSTEM_PROMPT, ENDSUMMARY_SYSTEM_PROMPT
+from auth import check_password
 
 if 'memory' not in st.session_state:
     st.session_state['memory'] = MemorySaver()
@@ -21,55 +23,10 @@ config = {"configurable": {"thread_id": "1"}}
 
 load_dotenv()
 
-# Authentication function
-def check_password():
-    """Returns `True` if the user had the correct password."""
-    
-    def password_entered():
-        """Checks whether a password entered by the user is correct."""
-        if hmac.compare_digest(st.session_state["username"], st.secrets["credentials"]["username"]) and \
-           hmac.compare_digest(st.session_state["password"], st.secrets["credentials"]["password"]):
-            st.session_state["password_correct"] = True
-            del st.session_state["password"]  # Don't store the password
-            del st.session_state["username"]  # Don't store the username
-        else:
-            st.session_state["password_correct"] = False
-
-    # Initialize session state
-    if "password_correct" not in st.session_state:
-        st.session_state["password_correct"] = False
-
-    # Show login form if not authenticated
-    if not st.session_state["password_correct"]:
-        st.title("Login")
-        st.text_input("Username", key="username")
-        st.text_input("Password", type="password", key="password")
-        st.button("Login", on_click=password_entered)
-        return False
-    
-    return True
-
 class State(TypedDict):
     messages: Annotated[list, add_messages]
 
 graph_builder = StateGraph(State)
-
-llm_reasoning = init_chat_model(
-    "azure_openai:o4-mini",
-    azure_deployment="o4-mini",
-)
-llm_reasoning2 = init_chat_model(
-    "azure_openai:o1",
-    azure_deployment="o1",
-)
-grokllm = init_chat_model(
-    "azure_openai:grok-3",
-    azure_deployment="grok-3",
-)
-llm = init_chat_model(
-    "azure_openai:gpt-4.1",
-    azure_deployment="gpt-4.1",
-)
 
 @tool
 def gsearch(search_term: str) -> str:
@@ -81,31 +38,31 @@ llm_withTools = llm.bind_tools([gsearch])
 
 def rewrite(state: State):
     prompt = [
-        {"role": "system", "content": "You are an AI assistant that must take the user question and generate a list of search terms that will be used to search the web. The search terms should be concise and focused on the technical aspects of the question. If the user asks one simple thing, you can just return the question as is. If the user asks a complex question, you should break it down into smaller parts and generate multiple search terms for each part. Keep the overlap between search terms as small as possible. Generate only the minimun necessary search terms, yet collectively cover the user’s question entirely. Return the search terms as a list of strings ['search_term1','search_term2','search_term3'] and nothing else."},
+        {"role": "system", "content": REWRITE_SYSTEM_PROMPT},
     ] + state["messages"]
     return {"messages": [ llm.invoke(prompt) ]}
 
 def reason(state: State):
     prompt = [
-        {"role": "system", "content": "You are an AI assistant that answers the user question in a very clear, accurate and concise manner. Pay attention to the technical details and provide accurate information. Mention if you don't know something."},
+        {"role": "system", "content": REASON_SYSTEM_PROMPT},
     ] + state["messages"]
     return {"messages": [ llm_reasoning.invoke(prompt) ]}
 
 def reason2(state: State):
     prompt = [
-        {"role": "system", "content": "You are an AI assistant that answers the user question in a very clear, accurate and concise manner. Pay attention to the technical details and provide accurate information. Mention if you don't know something."},
+        {"role": "system", "content": REASON2_SYSTEM_PROMPT},
     ] + state["messages"]
-    return {"messages": [ llm_reasoning2.invoke(prompt) ]}
+    return {"messages": [ llm.invoke(prompt) ]}
 
 def grok(state: State):
     prompt = [
-        {"role": "system", "content": "You are an AI assistant that answers the user question in a very clear, accurate and concise manner. Pay attention to the technical details and provide accurate information. Mention if you don't know something."},
+        {"role": "system", "content": GROK_SYSTEM_PROMPT},
     ] + state["messages"]
     return {"messages": [ grokllm.invoke(prompt) ]}
 
 def websearch(state: State):
     prompt = [
-        {"role": "system", "content": "You are an AI assistant that searches the web for information to answer the search terms you receive. Use the search engine tool to find relevant information. If you receive multiple search terms, you should search for each term separately."},
+        {"role": "system", "content": WEBSEARCH_SYSTEM_PROMPT},
     ] + state["messages"]
     response_message = llm_withTools.invoke(prompt)
     results = ""
@@ -118,9 +75,9 @@ def websearch(state: State):
 
 def endsummary(state: State):
     prompt = [
-        {"role": "system", "content": "You are an AI assistant that must combine all information received from different inputs to generate a response that best covers the question. You are getting results from a few LLMs and from web search. Information may be overlaping or contradicting, use your reasoning to formulate the accurate response. If you get contradicting information mention it along with sources. Focus on technical aspects and details. Keep the response less verbose."},
+        {"role": "system", "content": ENDSUMMARY_SYSTEM_PROMPT},
     ] + state["messages"]
-    return {"messages": [ llm.invoke(prompt) ]}
+    return {"messages": [ llm_reasoning2.invoke(prompt) ]}
 
 graph_builder.add_node("rewrite", rewrite)
 graph_builder.add_node("reason", reason)

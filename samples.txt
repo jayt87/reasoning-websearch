@@ -1,3 +1,2 @@
 I have an AI agent written in python and langgraph. Can I use AI foundry to deploy it? If yes explain how. Explain the differences if I use Foundry SDK and/or Semantic Kernel.
-
 what is azure foundry and what is semantic kernel?
