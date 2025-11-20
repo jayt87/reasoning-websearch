@@ -1,5 +1,5 @@
-langgraph
-streamlit
-langchain[openai]
+langgraph==1.0.3
+streamlit==1.51.0
+langchain[openai]==1.0.3
 python-dotenv
 beautifulsoup4

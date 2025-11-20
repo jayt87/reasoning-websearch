@@ -1,4 +1,4 @@
-def google_search(query: str, num_results: int = 10, max_chars: int = 10000) -> list:  # type: ignore[type-arg]
+def google_search(query: str, num_results: int = 5, max_chars: int = 150001) -> list:  # type: ignore[type-arg]
     import os
     import time
 
@@ -16,7 +16,7 @@ def google_search(query: str, num_results: int = 10, max_chars: int = 10000) -> 
 
     url = "https://customsearch.googleapis.com/customsearch/v1"
     params = {"key": str(api_key), "cx": str(search_engine_id), "q": str(query), "num": str(num_results)}
-
+    
     response = requests.get(url, params=params)
 
     if response.status_code != 200:
@@ -27,7 +27,7 @@ def google_search(query: str, num_results: int = 10, max_chars: int = 10000) -> 
 
     def get_page_content(url: str) -> str:
         try:
-            response = requests.get(url, timeout=10)
+            response = requests.get(url, timeout=6)
             soup = BeautifulSoup(response.content, "html.parser")
             text = soup.get_text(separator=" ", strip=True)
             words = text.split()
@@ -48,7 +48,7 @@ def google_search(query: str, num_results: int = 10, max_chars: int = 10000) -> 
             enriched_results.append(
                 {"title": item["title"], "link": item["link"], "snippet": item["snippet"], "body": body}
             )
-            time.sleep(0.2)  # Be respectful to the servers
+            time.sleep(0.01)  # Be respectful to the servers
         except Exception as e:
             print(f"Error processing item {item['link']}: {str(e)}")
             continue
